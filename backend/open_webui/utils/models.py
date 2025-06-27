@@ -64,6 +64,26 @@ async def get_all_base_models(request: Request, user: UserModel = None):
 async def get_all_models(request, user: UserModel = None):
     models = await get_all_base_models(request, user=user)
 
+    # Add custom model
+    models.append({
+        "id": "my-agent-id",
+        "name": "My Agent",
+        "object": "model",
+        "created": int(time.time()),
+        "owned_by": "custom",
+        "connection_type": "local",
+        "tags": [{"name": "custom"}],
+        "actions": [],
+        "filters": [],
+        "info": {
+            "meta": {
+                "profile_image_url": "/favicon.png",
+                "description": "Custom static agent model",
+                "model_ids": None
+            }
+        }
+    })
+
     # If there are no models, return an empty list
     if len(models) == 0:
         return []

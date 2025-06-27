@@ -31,6 +31,10 @@ from open_webui.routers.ollama import (
     generate_chat_completion as generate_ollama_chat_completion,
 )
 
+from open_webui.routers.myagent import (
+    generate_chat_completion as generate_myagent_chat_completion,
+)
+
 from open_webui.routers.pipelines import (
     process_pipeline_inlet_filter,
     process_pipeline_outlet_filter,
@@ -343,6 +347,15 @@ async def generate_chat_completion(
                 converted = convert_response_ollama_to_openai(response)
                 print(f"Converted response: {converted}")
                 return converted
+        elif model.get("id") == "my-agent-id":
+            print("Calling generate_myagent_chat_completion")
+            response = await generate_myagent_chat_completion(
+                request=request,
+                form_data=form_data,
+                user=user,
+            )
+            print(f"Response from generate_myagent_chat_completion: {response}")
+            return response
         else:
             print("Calling generate_openai_chat_completion as default")
             response = await generate_openai_chat_completion(

@@ -105,9 +105,12 @@ async def cleanup_response(
     response: Optional[aiohttp.ClientResponse],
     session: Optional[aiohttp.ClientSession],
 ):
+    print("\n--- cleanup_response called ---")
     if response:
+        print(f"Closing response: {response}")
         response.close()
     if session:
+        print("Closing session")
         await session.close()
 
 
@@ -119,36 +122,55 @@ async def send_post_request(
     content_type: Optional[str] = None,
     user: UserModel = None,
 ):
+    print("\n--- send_post_request called ---")
+    print(f"URL: {url}")
+    try:
+        print(f"Payload: {payload.decode('utf-8') if isinstance(payload, bytes) else payload}")
+    except Exception as e:
+        print(f"Unable to decode payload: {e}")
+    print(f"Stream: {stream}")
+    print(f"Key: {'[REDACTED]' if key else None}")
+    print(f"Content-Type: {content_type}")
+    print(f"User: {user}")
 
     r = None
     try:
         session = aiohttp.ClientSession(
             trust_env=True, timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT)
         )
+        print("ClientSession created")
+
+        headers = {
+            "Content-Type": "application/json",
+            **({"Authorization": f"Bearer {key}"} if key else {}),
+            **(
+                {
+                    "X-OpenWebUI-User-Name": user.name,
+                    "X-OpenWebUI-User-Id": user.id,
+                    "X-OpenWebUI-User-Email": user.email,
+                    "X-OpenWebUI-User-Role": user.role,
+                }
+                if ENABLE_FORWARD_USER_INFO_HEADERS and user
+                else {}
+            ),
+        }
+
+        print(f"Request headers: {headers}")
 
         r = await session.post(
             url,
             data=payload,
-            headers={
-                "Content-Type": "application/json",
-                **({"Authorization": f"Bearer {key}"} if key else {}),
-                **(
-                    {
-                        "X-OpenWebUI-User-Name": user.name,
-                        "X-OpenWebUI-User-Id": user.id,
-                        "X-OpenWebUI-User-Email": user.email,
-                        "X-OpenWebUI-User-Role": user.role,
-                    }
-                    if ENABLE_FORWARD_USER_INFO_HEADERS and user
-                    else {}
-                ),
-            },
+            headers=headers,
             ssl=AIOHTTP_CLIENT_SESSION_SSL,
         )
+        print(f"Response object: {r}")
+        print(f"Response status: {r.status}")
+
         r.raise_for_status()
 
         if stream:
             response_headers = dict(r.headers)
+            print(f"Streaming response headers: {response_headers}")
 
             if content_type:
                 response_headers["Content-Type"] = content_type
@@ -163,24 +185,30 @@ async def send_post_request(
             )
         else:
             res = await r.json()
+            print(f"Response JSON: {res}")
             await cleanup_response(r, session)
             return res
 
     except Exception as e:
+        print(f"Exception occurred: {e}")
         detail = None
 
         if r is not None:
             try:
+                print("Attempting to parse error response JSON")
                 res = await r.json()
+                print(f"Error response JSON: {res}")
                 if "error" in res:
                     detail = f"Ollama: {res.get('error', 'Unknown error')}"
-            except Exception:
+            except Exception as json_err:
+                print(f"Failed to decode error response JSON: {json_err}")
                 detail = f"Ollama: {e}"
 
         raise HTTPException(
             status_code=r.status if r else 500,
             detail=detail if detail else "Open WebUI: Server Connection Error",
         )
+
 
 
 def get_api_key(idx, url, configs):

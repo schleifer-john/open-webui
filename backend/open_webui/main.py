@@ -1169,26 +1169,6 @@ async def get_models(request: Request, user=Depends(get_verified_user)):
         f"/api/models returned filtered models accessible to the user: {json.dumps([model['id'] for model in models])}"
     )
 
-    # Add custom model
-    models.append({
-        "id": "my-agent-id",
-        "name": "My Agent",
-        "object": "model",
-        "created": int(time.time()),
-        "owned_by": "custom",
-        "connection_type": "local",
-        "tags": [{"name": "custom"}],
-        "actions": [],
-        "filters": [],
-        "info": {
-            "meta": {
-                "profile_image_url": "/favicon.png",
-                "description": "Custom static agent model",
-                "model_ids": None
-            }
-        }
-    })
-
     return {"data": models}
 
 
