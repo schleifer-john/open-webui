@@ -24,13 +24,18 @@ ARG GID=0
 FROM --platform=$BUILDPLATFORM node:22-alpine3.20 AS build
 ARG BUILD_HASH
 
+COPY z-root-public.pem /usr/local/share/ca-certificates/z-root-public.pem
+
 WORKDIR /app
 
 # to store git revision in build
 RUN apk add --no-cache git
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/z-root-public.pem npm ci
+
+# Increase memory limit
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 COPY . .
 ENV APP_BUILD_HASH=${BUILD_HASH}
@@ -111,7 +116,7 @@ RUN chown -R $UID:$GID /app $HOME
 RUN if [ "$USE_OLLAMA" = "true" ]; then \
     apt-get update && \
     # Install pandoc and netcat
-    apt-get install -y --no-install-recommends git build-essential pandoc netcat-openbsd curl && \
+    apt-get install -y --no-install-recommends git build-essential pandoc netcat-openbsd curl sqlite3 && \
     apt-get install -y --no-install-recommends gcc python3-dev && \
     # for RAG OCR
     apt-get install -y --no-install-recommends ffmpeg libsm6 libxext6 && \
@@ -124,7 +129,7 @@ RUN if [ "$USE_OLLAMA" = "true" ]; then \
     else \
     apt-get update && \
     # Install pandoc, netcat and gcc
-    apt-get install -y --no-install-recommends git build-essential pandoc gcc netcat-openbsd curl jq && \
+    apt-get install -y --no-install-recommends git build-essential pandoc gcc netcat-openbsd curl jq sqlite3 && \
     apt-get install -y --no-install-recommends gcc python3-dev && \
     # for RAG OCR
     apt-get install -y --no-install-recommends ffmpeg libsm6 libxext6 && \
