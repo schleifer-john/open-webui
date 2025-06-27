@@ -7,8 +7,10 @@ from open_webui.utils.misc import (
 
 
 def convert_ollama_tool_call_to_openai(tool_calls: dict) -> dict:
+    print(f"[convert_ollama_tool_call_to_openai] Received tool_calls: {tool_calls}")
     openai_tool_calls = []
     for tool_call in tool_calls:
+        print(f"[convert_ollama_tool_call_to_openai] Processing tool_call: {tool_call}")
         openai_tool_call = {
             "index": tool_call.get("index", 0),
             "id": tool_call.get("id", f"call_{str(uuid4())}"),
@@ -20,12 +22,15 @@ def convert_ollama_tool_call_to_openai(tool_calls: dict) -> dict:
                 ),
             },
         }
+        print(f"[convert_ollama_tool_call_to_openai] Converted tool_call: {openai_tool_call}")
         openai_tool_calls.append(openai_tool_call)
+    print(f"[convert_ollama_tool_call_to_openai] Final openai_tool_calls: {openai_tool_calls}")
     return openai_tool_calls
 
 
 def convert_ollama_usage_to_openai(data: dict) -> dict:
-    return {
+    print(f"[convert_ollama_usage_to_openai] Received data: {data}")
+    result = {
         "response_token/s": (
             round(
                 (
@@ -78,15 +83,19 @@ def convert_ollama_usage_to_openai(data: dict) -> dict:
             "rejected_prediction_tokens": 0,
         },
     }
+    print(f"[convert_ollama_usage_to_openai] Converted usage data: {result}")
+    return result
 
 
 def convert_response_ollama_to_openai(ollama_response: dict) -> dict:
+    print(f"[convert_response_ollama_to_openai] Received response: {ollama_response}")
     model = ollama_response.get("model", "ollama")
     message_content = ollama_response.get("message", {}).get("content", "")
     tool_calls = ollama_response.get("message", {}).get("tool_calls", None)
     openai_tool_calls = None
 
     if tool_calls:
+        print(f"[convert_response_ollama_to_openai] Found tool_calls: {tool_calls}")
         openai_tool_calls = convert_ollama_tool_call_to_openai(tool_calls)
 
     data = ollama_response
@@ -96,12 +105,16 @@ def convert_response_ollama_to_openai(ollama_response: dict) -> dict:
     response = openai_chat_completion_message_template(
         model, message_content, openai_tool_calls, usage
     )
+    print(f"[convert_response_ollama_to_openai] Final response: {response}")
     return response
 
 
 async def convert_streaming_response_ollama_to_openai(ollama_streaming_response):
+    print("[convert_streaming_response_ollama_to_openai] Starting stream conversion")
     async for data in ollama_streaming_response.body_iterator:
+        print(f"[convert_streaming_response_ollama_to_openai] Raw stream data: {data}")
         data = json.loads(data)
+        print(f"[convert_streaming_response_ollama_to_openai] Parsed JSON data: {data}")
 
         model = data.get("model", "ollama")
         message_content = data.get("message", {}).get("content", None)
@@ -109,12 +122,15 @@ async def convert_streaming_response_ollama_to_openai(ollama_streaming_response)
         openai_tool_calls = None
 
         if tool_calls:
+            print(f"[convert_streaming_response_ollama_to_openai] Found tool_calls: {tool_calls}")
             openai_tool_calls = convert_ollama_tool_call_to_openai(tool_calls)
 
         done = data.get("done", False)
+        print(f"[convert_streaming_response_ollama_to_openai] done: {done}")
 
         usage = None
         if done:
+            print("[convert_streaming_response_ollama_to_openai] Final chunk, converting usage")
             usage = convert_ollama_usage_to_openai(data)
 
         data = openai_chat_chunk_message_template(
@@ -122,6 +138,8 @@ async def convert_streaming_response_ollama_to_openai(ollama_streaming_response)
         )
 
         line = f"data: {json.dumps(data)}\n\n"
+        print(f"[convert_streaming_response_ollama_to_openai] Yielding line: {line.strip()}")
         yield line
 
+    print("[convert_streaming_response_ollama_to_openai] Stream complete, yielding [DONE]")
     yield "data: [DONE]\n\n"

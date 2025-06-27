@@ -1137,12 +1137,31 @@ async def generate_chat_completion(
     user=Depends(get_verified_user),
     bypass_filter: Optional[bool] = False,
 ):
+    print("\n--- ollama.py generate_chat_completion called ---")
+    print(f"Request method: {request.method}")
+    print(f"Request url: {request.url}")
+    print(f"Request headers: {dict(request.headers)}")
+
+    body_bytes = await request.body()
+    try:
+        print(f"Request body (decoded): {body_bytes.decode('utf-8')}")
+    except Exception as e:
+        print(f"Unable to decode request body: {e}")
+
+    print(f"Initial form_data: {form_data}")
+    print(f"URL index: {url_idx}")
+    print(f"Bypass filter: {bypass_filter}")
+
     if BYPASS_MODEL_ACCESS_CONTROL:
         bypass_filter = True
+        print("BYPASS_MODEL_ACCESS_CONTROL is True, bypass_filter overridden.")
 
     metadata = form_data.pop("metadata", None)
+    print(f"Metadata: {metadata}")
+
     try:
         form_data = GenerateChatCompletionForm(**form_data)
+        print(f"Parsed form_data (Pydantic): {form_data}")
     except Exception as e:
         log.exception(e)
         raise HTTPException(
@@ -1154,14 +1173,19 @@ async def generate_chat_completion(
     if "metadata" in payload:
         del payload["metadata"]
 
+    print(f"Initial payload (after model_dump): {payload}")
+
     model_id = payload["model"]
     model_info = Models.get_model_by_id(model_id)
+    print(f"Model info retrieved: {model_info}")
 
     if model_info:
         if model_info.base_model_id:
             payload["model"] = model_info.base_model_id
+            print(f"Base model ID applied: {payload['model']}")
 
         params = model_info.params.model_dump()
+        print(f"Model params: {params}")
 
         if params:
             if payload.get("options") is None:
@@ -1172,7 +1196,6 @@ async def generate_chat_completion(
             )
             payload = apply_model_system_prompt_to_body(params, payload, metadata, user)
 
-        # Check if user has access to the model
         if not bypass_filter and user.role == "user":
             if not (
                 user.id == model_info.user_id
@@ -1180,12 +1203,14 @@ async def generate_chat_completion(
                     user.id, type="read", access_control=model_info.access_control
                 )
             ):
+                print("Access denied: user does not have permission.")
                 raise HTTPException(
                     status_code=403,
                     detail="Model not found",
                 )
     elif not bypass_filter:
         if user.role != "admin":
+            print("Access denied: non-admin user with unknown model.")
             raise HTTPException(
                 status_code=403,
                 detail="Model not found",
@@ -1193,8 +1218,11 @@ async def generate_chat_completion(
 
     if ":" not in payload["model"]:
         payload["model"] = f"{payload['model']}:latest"
+        print(f"Updated payload model with tag: {payload['model']}")
 
     url, url_idx = await get_ollama_url(request, payload["model"], url_idx)
+    print(f"Ollama URL: {url}, url_idx: {url_idx}")
+
     api_config = request.app.state.config.OLLAMA_API_CONFIGS.get(
         str(url_idx),
         request.app.state.config.OLLAMA_API_CONFIGS.get(url, {}),  # Legacy support
@@ -1203,7 +1231,10 @@ async def generate_chat_completion(
     prefix_id = api_config.get("prefix_id", None)
     if prefix_id:
         payload["model"] = payload["model"].replace(f"{prefix_id}.", "")
-    # payload["keep_alive"] = -1 # keep alive forever
+        print(f"Prefix ID '{prefix_id}' stripped from model name: {payload['model']}")
+
+    print(f"Final payload to POST: {json.dumps(payload)}")
+
     return await send_post_request(
         url=f"{url}/api/chat",
         payload=json.dumps(payload),
@@ -1212,6 +1243,7 @@ async def generate_chat_completion(
         content_type="application/x-ndjson",
         user=user,
     )
+
 
 
 # TODO: we should update this part once Ollama supports other types
