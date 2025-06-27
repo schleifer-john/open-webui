@@ -34,6 +34,8 @@ from fastapi import (
     BackgroundTasks,
 )
 
+from fastapi.routing import APIRoute
+
 from fastapi.openapi.docs import get_swagger_ui_html
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,6 +60,7 @@ from open_webui.routers import (
     images,
     ollama,
     openai,
+    myagent,
     retrieval,
     pipelines,
     tasks,
@@ -457,7 +460,6 @@ v{VERSION} - building the best AI user interface.
 https://github.com/open-webui/open-webui
 """
 )
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1017,7 +1019,7 @@ app.mount("/ws", socket_app)
 
 app.include_router(ollama.router, prefix="/ollama", tags=["ollama"])
 app.include_router(openai.router, prefix="/openai", tags=["openai"])
-
+app.include_router(myagent.router, prefix="/myagent", tags=["myagent"])
 
 app.include_router(pipelines.router, prefix="/api/v1/pipelines", tags=["pipelines"])
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["tasks"])
@@ -1052,6 +1054,13 @@ app.include_router(
 )
 app.include_router(utils.router, prefix="/api/v1/utils", tags=["utils"])
 
+# Debug: print all registered routes
+for route in app.routes:
+    if isinstance(route, APIRoute):
+        print(route.path, route.methods)
+    else:
+        print(f"Skipping non-HTTP route: {route.path} ({type(route).__name__})")
+
 
 try:
     audit_level = AuditLevel(AUDIT_LOG_LEVEL)
@@ -1075,6 +1084,28 @@ if audit_level != AuditLevel.NONE:
 
 @app.get("/api/models")
 async def get_models(request: Request, user=Depends(get_verified_user)):
+    """
+    GET /api/models endpoint.
+
+    Retrieves and returns a list of models available to the authenticated user.
+    Applies filtering to exclude certain pipeline types and enforces access control
+    based on user permissions.
+
+    Steps:
+    - Fetches all registered models.
+    - Filters out models with a pipeline type of 'filter'.
+    - Merges and normalizes model tags from metadata and top-level attributes.
+    - Sorts models based on a predefined model order from app configuration.
+    - Applies access control filtering unless access control is bypassed.
+    - Appends a static custom model entry ("My Agent") to the result list.
+
+    Args:
+        request (Request): The FastAPI request object, containing app state and config.
+        user (User): The authenticated user (injected via Depends).
+
+    Returns:
+        dict: A dictionary containing the filtered model list under the "data" key.
+    """
     def get_filtered_models(models, user):
         filtered_models = []
         for model in models:
@@ -1137,6 +1168,27 @@ async def get_models(request: Request, user=Depends(get_verified_user)):
     log.debug(
         f"/api/models returned filtered models accessible to the user: {json.dumps([model['id'] for model in models])}"
     )
+
+    # Add custom model
+    models.append({
+        "id": "my-agent-id",
+        "name": "My Agent",
+        "object": "model",
+        "created": int(time.time()),
+        "owned_by": "custom",
+        "connection_type": "local",
+        "tags": [{"name": "custom"}],
+        "actions": [],
+        "filters": [],
+        "info": {
+            "meta": {
+                "profile_image_url": "/favicon.png",
+                "description": "Custom static agent model",
+                "model_ids": None
+            }
+        }
+    })
+
     return {"data": models}
 
 
@@ -1152,34 +1204,50 @@ async def chat_completion(
     form_data: dict,
     user=Depends(get_verified_user),
 ):
+    print(f"chat_completion called with request: {request} and form_data: {form_data}")
+
     if not request.app.state.MODELS:
+        print("No models loaded in app.state.MODELS, calling get_all_models")
         await get_all_models(request, user=user)
 
     model_item = form_data.pop("model_item", {})
     tasks = form_data.pop("background_tasks", None)
+    print(f"model_item: {model_item}")
+    print(f"background_tasks: {tasks}")
 
     metadata = {}
     try:
         if not model_item.get("direct", False):
             model_id = form_data.get("model", None)
+            print(f"Using non-direct model with id: {model_id}")
+
             if model_id not in request.app.state.MODELS:
+                print(f"Model {model_id} not found in app.state.MODELS")
                 raise Exception("Model not found")
 
             model = request.app.state.MODELS[model_id]
+            print(f"Selected model from app.state.MODELS: {model}")
             model_info = Models.get_model_by_id(model_id)
+            print(f"Model info fetched: {model_info}")
 
             # Check if user has access to the model
             if not BYPASS_MODEL_ACCESS_CONTROL and user.role == "user":
+                print(f"Checking model access for user role: {user.role}")
                 try:
                     check_model_access(user, model)
+                    print("User access to model verified")
                 except Exception as e:
+                    print(f"User access check failed: {e}")
                     raise e
         else:
             model = model_item
             model_info = None
+            print("Direct model detected")
+            print(f"Direct model set as: {model}")
 
             request.state.direct = True
             request.state.model = model
+            print(f"Set request.state.direct={request.state.direct}, request.state.model={request.state.model}")
 
         metadata = {
             "user_id": user.id,
@@ -1205,18 +1273,23 @@ async def chat_completion(
                 else {}
             ),
         }
+        print(f"Constructed metadata: {metadata}")
 
         request.state.metadata = metadata
         form_data["metadata"] = metadata
+        print(f"Set request.state.metadata and updated form_data with metadata")
 
         form_data, metadata, events = await process_chat_payload(
             request, form_data, user, metadata, model
         )
+        print(f"Processed chat payload: form_data={form_data}, metadata={metadata}, events={events}")
 
     except Exception as e:
+        print(f"Error processing chat payload: {e}")
         log.debug(f"Error processing chat payload: {e}")
+
         if metadata.get("chat_id") and metadata.get("message_id"):
-            # Update the chat message with the error
+            print(f"Updating chat message with error for chat_id={metadata['chat_id']} and message_id={metadata['message_id']}")
             Chats.upsert_message_to_chat_by_id_and_message_id(
                 metadata["chat_id"],
                 metadata["message_id"],
@@ -1232,11 +1305,13 @@ async def chat_completion(
 
     try:
         response = await chat_completion_handler(request, form_data, user)
+        print(f"Received response from chat_completion_handler: {response}")
 
         return await process_chat_response(
             request, response, form_data, user, metadata, model, events, tasks
         )
     except Exception as e:
+        print(f"Error in chat_completion_handler or process_chat_response: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
@@ -1253,6 +1328,17 @@ async def chat_completed(
     request: Request, form_data: dict, user=Depends(get_verified_user)
 ):
     try:
+        print("\n--- chat_completed called ---")
+        print(f"Request method: {request.method}")
+        print(f"Request url: {request.url}")
+        print(f"Request headers: {dict(request.headers)}")
+
+        body_bytes = await request.body()
+        try:
+            print(f"Request body (decoded): {body_bytes.decode('utf-8')}")
+        except Exception as e:
+            print(f"Unable to decode request body: {e}")
+
         model_item = form_data.pop("model_item", {})
 
         if model_item.get("direct", False):
@@ -1267,11 +1353,23 @@ async def chat_completed(
         )
 
 
+
 @app.post("/api/chat/actions/{action_id}")
 async def chat_action(
     request: Request, action_id: str, form_data: dict, user=Depends(get_verified_user)
 ):
     try:
+        print("\n--- chat_action called ---")
+        print(f"Request method: {request.method}")
+        print(f"Request url: {request.url}")
+        print(f"Request headers: {dict(request.headers)}")
+
+        body_bytes = await request.body()
+        try:
+            print(f"Request body (decoded): {body_bytes.decode('utf-8')}")
+        except Exception as e:
+            print(f"Unable to decode request body: {e}")
+
         model_item = form_data.pop("model_item", {})
 
         if model_item.get("direct", False):
@@ -1284,6 +1382,7 @@ async def chat_action(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
 
 
 @app.post("/api/tasks/stop/{task_id}")
